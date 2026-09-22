@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">MobileUseApp</string>
+    <string name="accessibility_service_description">Lets MobileUse\'s Agent 2 read the screen and tap/type/swipe on your behalf, only when you ask it to run a task.</string>
 </resources>

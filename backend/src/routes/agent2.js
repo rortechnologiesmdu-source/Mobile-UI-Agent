@@ -4,6 +4,11 @@ const { decideNextAction } = require('../services/agentDecision');
 
 const router = express.Router();
 
+// Hard step-count cap per task (MobileUse-Agent-Spec.md section 5: "safety
+// rules baked in from v0.1") — stops runaway loops rather than trusting the
+// model to always emit "done".
+const MAX_STEPS = 15;
+
 // Starts a new Agent 2 run for a goal. Returns the created run id.
 router.post('/runs', async (req, res) => {
   try {
@@ -40,6 +45,9 @@ router.post('/runs/:id/step', async (req, res) => {
     if (action.action === 'done') {
       run.status = 'done';
       run.resultText = action.result || '';
+    } else if (run.steps.length >= MAX_STEPS) {
+      run.status = 'failed';
+      run.resultText = `Stopped: exceeded the ${MAX_STEPS}-step safety cap without finishing.`;
     }
 
     await run.save();

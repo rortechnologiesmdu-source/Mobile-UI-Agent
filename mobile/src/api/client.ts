@@ -64,7 +64,7 @@ export function startAgentRun(goal: string) {
 }
 
 export type AgentAction =
-  | { action: 'tap'; target: { description: string } }
+  | { action: 'tap'; target: { description: string; point?: { x: number; y: number } } }
   | { action: 'type'; text: string }
   | { action: 'swipe'; direction: 'up' | 'down' | 'left' | 'right' }
   | { action: 'launch_app'; package: string }
@@ -84,4 +84,17 @@ export function stepAgentRun(
 
 export function stopAgentRun(runId: string) {
   return request<{ status: string }>(`/agent2/runs/${runId}/stop`, { method: 'POST' });
+}
+
+export type AgentRunSummary = {
+  _id: string;
+  goal: string;
+  status: 'running' | 'done' | 'failed' | 'stopped';
+  resultText: string | null;
+  steps: unknown[];
+  createdAt: string;
+};
+
+export function listAgentRuns() {
+  return request<{ runs: AgentRunSummary[] }>('/agent2/runs');
 }
