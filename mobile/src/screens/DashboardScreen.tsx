@@ -1,34 +1,33 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  FlatList,
-  StyleSheet,
-  RefreshControl,
-  TextInput,
-  Button,
-  ActivityIndicator,
-} from 'react-native';
-import { getDashboardSummary, DashboardEvent } from '../api/client';
+import { View, Text, StyleSheet, RefreshControl, ScrollView, Pressable } from 'react-native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { getDashboardSummary, DashboardTile, EventSource } from '../api/client';
 import HealthCheckBanner from './HealthCheckBanner';
+import type { DashboardStackParamList } from '../navigation/types';
 
 type Props = {
-  onRunAgent: (goal: string) => void;
-  agentRunning: boolean;
+  navigation: NativeStackNavigationProp<DashboardStackParamList, 'DashboardHome'>;
 };
 
-export default function DashboardScreen({ onRunAgent, agentRunning }: Props) {
-  const [events, setEvents] = useState<DashboardEvent[]>([]);
+const TILES: { source: EventSource; label: string; icon: string; screen: keyof DashboardStackParamList }[] = [
+  { source: 'sms', label: 'SMS', icon: '💬', screen: 'SmsDetail' },
+  { source: 'notification', label: 'Notifications', icon: '🔔', screen: 'NotificationsDetail' },
+  { source: 'location', label: 'Location', icon: '📍', screen: 'LocationDetail' },
+  { source: 'file', label: 'Files', icon: '📄', screen: 'FilesDetail' },
+  { source: 'call_log', label: 'Call Log', icon: '📞', screen: 'CallLogDetail' },
+];
+
+export default function DashboardScreen({ navigation }: Props) {
+  const [tiles, setTiles] = useState<Record<string, DashboardTile>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [goal, setGoal] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const res = await getDashboardSummary();
-      setEvents(res.events);
+      setTiles(res.tiles);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -41,61 +40,53 @@ export default function DashboardScreen({ onRunAgent, agentRunning }: Props) {
   }, [load]);
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>MobileUse</Text>
-
+    <ScrollView
+      style={styles.container}
+      refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
+    >
       <HealthCheckBanner />
 
-      <Text style={styles.sectionTitle}>Today's Summary</Text>
       {error && <Text style={styles.error}>{error}</Text>}
-      <FlatList
-        data={events}
-        keyExtractor={(item) => item._id}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
-        renderItem={({ item }) => (
-          <View style={styles.eventRow}>
-            <Text style={styles.eventText}>
-              {item.summaryText ?? `${item.source}: (uncategorized)`}
-            </Text>
-          </View>
-        )}
-        ListEmptyComponent={
-          !loading ? <Text style={styles.empty}>No events yet.</Text> : null
-        }
-      />
 
-      <Text style={styles.sectionTitle}>Ask the Agent</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="What do you want me to do?"
-        value={goal}
-        onChangeText={setGoal}
-        editable={!agentRunning}
-      />
-      <Button
-        title={agentRunning ? 'Running…' : '▶ Run Agent'}
-        onPress={() => onRunAgent(goal)}
-        disabled={agentRunning || goal.trim().length === 0}
-      />
-      {agentRunning && <ActivityIndicator style={styles.spinner} />}
-    </View>
+      <Text style={styles.sectionTitle}>Today's Summary</Text>
+      <View style={styles.grid}>
+        {TILES.map((tile) => {
+          const data = tiles[tile.source];
+          return (
+            <Pressable
+              key={tile.source}
+              style={styles.card}
+              onPress={() => navigation.navigate(tile.screen as any)}
+            >
+              <Text style={styles.cardIcon}>{tile.icon}</Text>
+              <Text style={styles.cardLabel}>{tile.label}</Text>
+              <Text style={styles.cardCount}>{data?.count ?? 0}</Text>
+              <Text style={styles.cardSnippet} numberOfLines={2}>
+                {data?.latestSummary ?? 'No recent data'}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
-  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 8 },
-  sectionTitle: { fontSize: 16, fontWeight: '600', marginTop: 16, marginBottom: 8 },
-  eventRow: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#eee' },
-  eventText: { fontSize: 14 },
-  empty: { color: '#999', fontStyle: 'italic' },
+  sectionTitle: { fontSize: 16, fontWeight: '600', marginTop: 8, marginBottom: 8 },
   error: { color: 'red', marginBottom: 8 },
-  input: {
+  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  card: {
+    width: '48%',
     borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 8,
+    borderColor: '#eee',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
   },
-  spinner: { marginTop: 8 },
+  cardIcon: { fontSize: 20 },
+  cardLabel: { fontSize: 14, fontWeight: '600', marginTop: 4 },
+  cardCount: { fontSize: 22, fontWeight: 'bold', marginTop: 2 },
+  cardSnippet: { fontSize: 12, color: '#666', marginTop: 4 },
 });

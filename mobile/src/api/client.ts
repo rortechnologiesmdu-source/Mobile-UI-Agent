@@ -13,8 +13,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export type EventSource = 'sms' | 'notification' | 'location' | 'activity' | 'file' | 'contact' | 'call_log';
+
 export type RawEventInput = {
-  source: 'sms' | 'notification' | 'location' | 'activity' | 'file' | 'contact';
+  source: EventSource;
   payload: Record<string, unknown>;
   deviceTimestamp: string;
 };
@@ -36,8 +38,22 @@ export type DashboardEvent = {
   summaryText: string | null;
 };
 
+export type DashboardTile = {
+  count: number;
+  latestSummary: string | null;
+  latestAt: string | null;
+};
+
 export function getDashboardSummary() {
-  return request<{ count: number; events: DashboardEvent[] }>('/dashboard/summary');
+  return request<{ tiles: Record<EventSource, DashboardTile>; events: DashboardEvent[] }>(
+    '/dashboard/summary'
+  );
+}
+
+export function getEventsBySource(source: EventSource, sinceHours = 48, limit = 50) {
+  return request<{ count: number; events: DashboardEvent[] }>(
+    `/events/${source}?sinceHours=${sinceHours}&limit=${limit}`
+  );
 }
 
 export function startAgentRun(goal: string) {

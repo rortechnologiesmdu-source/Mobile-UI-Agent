@@ -4,7 +4,7 @@ const RawEventSchema = new mongoose.Schema(
   {
     source: {
       type: String,
-      enum: ['sms', 'notification', 'location', 'activity', 'file', 'contact'],
+      enum: ['sms', 'notification', 'location', 'activity', 'file', 'contact', 'call_log'],
       required: true,
     },
     // Raw payload as received from the device, shape varies by source.

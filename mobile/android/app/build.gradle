@@ -77,6 +77,16 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
+    // react-native-gesture-handler's C++ codegen produces deeply nested object
+    // file paths that exceed Windows' 260-character limit when built from this
+    // project's long path. Redirecting the native build's staging directory to
+    // a short root-level path avoids that without moving the whole project.
+    externalNativeBuild {
+        cmake {
+            buildStagingDirectory "C:/rnbuild/mobileuse-cxx"
+        }
+    }
+
     namespace "com.mobileuse.app"
     defaultConfig {
         applicationId "com.mobileuse.app"

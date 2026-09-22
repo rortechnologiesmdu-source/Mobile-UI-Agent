@@ -3,44 +3,37 @@
  * @format
  */
 
-import React, { useEffect, useState } from 'react';
-import { StatusBar, StyleSheet, useColorScheme, View, Alert } from 'react-native';
+import 'react-native-gesture-handler';
+import React, { useEffect } from 'react';
+import { StatusBar, useColorScheme } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import DashboardScreen from './src/screens/DashboardScreen';
-import { requestSmsPermission, startCollector } from './src/native/collector';
+import { NavigationContainer } from '@react-navigation/native';
+import RootNavigator from './src/navigation/RootNavigator';
+import { requestAllCollectorPermissions, startCollector } from './src/native/collector';
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
-  const [agentRunning, setAgentRunning] = useState(false);
 
   useEffect(() => {
-    // Agent 1 starts as soon as the app is opened once — it then keeps running
-    // in the background via the foreground service + WorkManager (see spec 3.4).
-    requestSmsPermission().finally(() => startCollector());
+    // Agent 1 starts as soon as the app is opened once — permissions are asked
+    // for up front, then it keeps running in the background via the foreground
+    // service + WorkManager (see MobileUse-Agent-Spec-main.md section 3.4).
+    // Notification listener access can't be requested this way; the dashboard's
+    // Health Check banner prompts for that separately.
+    requestAllCollectorPermissions().finally(() => startCollector());
   }, []);
 
-  const handleRunAgent = async (goal: string) => {
-    // Agent 2's native observe/decide/act loop isn't wired up yet (build order
-    // step 4). For now this just confirms the trigger point on the dashboard.
-    setAgentRunning(true);
-    Alert.alert('Agent 2 not wired up yet', `Goal received: "${goal}"`);
-    setAgentRunning(false);
-  };
-
   return (
-    <SafeAreaProvider>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <View style={styles.container}>
-        <DashboardScreen onRunAgent={handleRunAgent} agentRunning={agentRunning} />
-      </View>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+        <NavigationContainer>
+          <RootNavigator />
+        </NavigationContainer>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-});
 
 export default App;

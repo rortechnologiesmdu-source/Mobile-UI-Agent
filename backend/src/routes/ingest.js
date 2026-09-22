@@ -1,5 +1,6 @@
 const express = require('express');
 const RawEvent = require('../models/RawEvent');
+const { applyDeterministicSummaries } = require('../services/deterministicSummary');
 
 const router = express.Router();
 
@@ -14,6 +15,7 @@ router.post('/', async (req, res) => {
       }
     }
 
+    await applyDeterministicSummaries(items);
     const docs = await RawEvent.insertMany(items);
     res.status(201).json({ inserted: docs.length });
   } catch (err) {
