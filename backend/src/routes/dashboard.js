@@ -39,8 +39,13 @@ router.get('/summary', async (req, res) => {
       SOURCES.map(async (source) => {
         const windowHours = WINDOW_HOURS_BY_SOURCE[source] ?? DEFAULT_WINDOW_HOURS;
         const since = new Date(Date.now() - windowHours * 60 * 60 * 1000);
-        const count = await RawEvent.countDocuments({ source, deviceTimestamp: { $gte: since } });
-        const latest = await RawEvent.findOne({ source, deviceTimestamp: { $gte: since } })
+        const filter = { source, deviceTimestamp: { $gte: since } };
+        // Same "must have a resolved place name" rule as the location detail screen.
+        if (source === 'location') {
+          filter['extracted.placeName'] = { $exists: true, $ne: null };
+        }
+        const count = await RawEvent.countDocuments(filter);
+        const latest = await RawEvent.findOne(filter)
           .sort({ deviceTimestamp: -1 })
           .lean();
         tiles[source] = {

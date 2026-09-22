@@ -32,7 +32,14 @@ router.get('/:source', async (req, res) => {
       }
     }
 
-    const events = await RawEvent.find({ source, deviceTimestamp: { $gte: since } })
+    const filter = { source, deviceTimestamp: { $gte: since } };
+    // Only show location snapshots that resolved to a real place name — a raw
+    // lat/lng pair isn't useful on its own (see services/deterministicSummary.js).
+    if (source === 'location') {
+      filter['extracted.placeName'] = { $exists: true, $ne: null };
+    }
+
+    const events = await RawEvent.find(filter)
       .sort({ deviceTimestamp: -1 })
       .limit(limit)
       .lean();
