@@ -5,9 +5,9 @@ export default function NotificationsDetailScreen() {
   return (
     <EventListScreen
       source="notification"
-      sinceHours={48}
-      limit={100}
-      emptyLabel="No notifications in the last 2 days."
+      sinceHours={24 * 30}
+      limit={10}
+      emptyLabel="No notifications yet."
       pollIntervalMs={5000}
     />
   );
