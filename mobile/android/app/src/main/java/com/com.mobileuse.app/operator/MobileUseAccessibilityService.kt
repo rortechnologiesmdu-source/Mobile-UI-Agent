@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "MobileUse.Operator"
 private const val MAX_TREE_NODES = 400
+private const val MAX_SCREENSHOT_WIDTH = 540
 
 // Agent 2's "body" — perception (accessibility tree + screenshot) and actuation
 // (tap/type/swipe/launch/back/home). No intelligence here; AgentModule bridges
@@ -268,11 +269,27 @@ class MobileUseAccessibilityService : AccessibilityService() {
                                 settle(null)
                                 return
                             }
-                            val softwareBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                            val fullBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                            // Downscale before sending to Gemini — a full-resolution
+                            // screenshot (e.g. 1080x2400) adds meaningfully to upload
+                            // and model processing time for no real benefit; the UI
+                            // is readable fine at a fraction of that.
+                            val scale = MAX_SCREENSHOT_WIDTH.toFloat() / fullBitmap.width
+                            val softwareBitmap = if (scale < 1f) {
+                                Bitmap.createScaledBitmap(
+                                    fullBitmap,
+                                    MAX_SCREENSHOT_WIDTH,
+                                    (fullBitmap.height * scale).toInt(),
+                                    true,
+                                )
+                            } else {
+                                fullBitmap
+                            }
                             val stream = ByteArrayOutputStream()
-                            softwareBitmap.compress(Bitmap.CompressFormat.JPEG, 70, stream)
+                            softwareBitmap.compress(Bitmap.CompressFormat.JPEG, 60, stream)
                             settle(Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP))
-                            softwareBitmap.recycle()
+                            if (softwareBitmap !== fullBitmap) softwareBitmap.recycle()
+                            fullBitmap.recycle()
                             bitmap.recycle()
                         } catch (e: Exception) {
                             Log.w(TAG, "screenshot processing failed: ${e.message}")

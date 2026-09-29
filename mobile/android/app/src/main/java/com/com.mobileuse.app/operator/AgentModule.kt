@@ -67,28 +67,38 @@ class AgentModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun executeAction(action: ReadableMap, promise: Promise) {
+        val type = action.getString("action")
+        Log.i("MobileUse.AgentModule", "executeAction called: $type")
         val service = MobileUseAccessibilityService.instance
         if (service == null) {
+            Log.w("MobileUse.AgentModule", "executeAction: service instance is null")
             promise.reject("NO_SERVICE", "Accessibility service not connected")
             return
         }
 
         try {
-            when (action.getString("action")) {
-                "tap" -> promise.resolve(handleTap(service, action))
+            val handled = when (type) {
+                "tap" -> handleTap(service, action)
                 "type" -> {
                     val text = action.getString("text") ?: ""
                     val node = service.findFocusedEditableNode()
-                    promise.resolve(if (node != null) service.typeText(node, text) else false)
+                    if (node != null) service.typeText(node, text) else false
                 }
-                "swipe" -> promise.resolve(service.dispatchSwipe(action.getString("direction") ?: "up"))
-                "launch_app" -> promise.resolve(launchApp(action.getString("package") ?: ""))
-                "press_back" -> promise.resolve(service.goBack())
-                "press_home" -> promise.resolve(service.goHome())
-                "done" -> promise.resolve(true)
-                else -> promise.reject("UNKNOWN_ACTION", "unknown action: ${action.getString("action")}")
+                "swipe" -> service.dispatchSwipe(action.getString("direction") ?: "up")
+                "launch_app" -> launchApp(action.getString("package") ?: "")
+                "press_back" -> service.goBack()
+                "press_home" -> service.goHome()
+                "done" -> true
+                else -> {
+                    Log.w("MobileUse.AgentModule", "executeAction: unknown action $type")
+                    promise.reject("UNKNOWN_ACTION", "unknown action: $type")
+                    return
+                }
             }
+            Log.i("MobileUse.AgentModule", "executeAction $type result: $handled")
+            promise.resolve(handled)
         } catch (e: Exception) {
+            Log.e("MobileUse.AgentModule", "executeAction $type failed", e)
             promise.reject("EXECUTE_FAILED", e)
         }
     }
@@ -111,9 +121,13 @@ class AgentModule(reactContext: ReactApplicationContext) :
 
     private fun launchApp(packageName: String): Boolean {
         val intent = reactApplicationContext.packageManager.getLaunchIntentForPackage(packageName)
-            ?: return false
+        if (intent == null) {
+            Log.w("MobileUse.AgentModule", "launchApp: no launch intent for $packageName")
+            return false
+        }
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         reactApplicationContext.startActivity(intent)
+        Log.i("MobileUse.AgentModule", "launchApp: startActivity called for $packageName")
         return true
     }
 
