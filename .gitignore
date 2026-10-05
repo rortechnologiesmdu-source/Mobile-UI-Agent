@@ -31,3 +31,8 @@ Thumbs.db
 
 # Android CMake staging dir from build.gradle (Windows-style path, created on macOS builds)
 mobile/android/app/C:/
+
+# iOS agent runner build output and per-task run artifacts
+ios-agent-runner/build/
+ios-agent-runner/build-build.log
+ios-agent-runner/runs/
