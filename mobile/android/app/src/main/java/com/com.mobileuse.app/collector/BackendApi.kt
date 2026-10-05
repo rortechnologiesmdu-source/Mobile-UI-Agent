@@ -1,6 +1,7 @@
 package com.mobileuse.app.collector
 
 import android.util.Log
+import com.mobileuse.app.BuildConfig
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
@@ -11,9 +12,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 
-// Backend is only reachable via `adb reverse tcp:4000 tcp:4000` while the phone
-// is on USB, per the current dev setup (see MobileUse-Agent-Spec-main.md section 7).
-private const val BASE_URL = "http://localhost:4000/api"
+// Set at build time from MOBILEUSE_BACKEND_URL in android/gradle.properties (the Mac's
+// Wi-Fi address, or localhost with `adb reverse tcp:4000 tcp:4000` over USB).
+private val BASE_URL = "${BuildConfig.BACKEND_URL}/api"
 
 object BackendApi {
     private val client = OkHttpClient()
@@ -27,6 +28,36 @@ object BackendApi {
 
         val body = JSONObject().put("events", JSONArray().put(event))
         post("$BASE_URL/ingest", body)
+    }
+
+    // Sends a batch and waits for the backend to store it. Returns false on any failure,
+    // so callers only move their "synced up to" marker once the data has really arrived —
+    // otherwise everything read while the backend was down would be skipped for good.
+    // Call from a background thread (workers / the SMS observer thread).
+    fun ingestEventsBlocking(source: String, events: List<Pair<JSONObject, String>>): Boolean {
+        if (events.isEmpty()) return true
+        val batch = JSONArray()
+        for ((payload, deviceTimestampIso) in events) {
+            batch.put(
+                JSONObject()
+                    .put("source", source)
+                    .put("payload", payload)
+                    .put("deviceTimestamp", deviceTimestampIso),
+            )
+        }
+        val request = Request.Builder()
+            .url("$BASE_URL/ingest")
+            .post(JSONObject().put("events", batch).toString().toRequestBody(jsonMediaType))
+            .build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) Log.w("MobileUse.BackendApi", "$source ingest failed: HTTP ${response.code}")
+                response.isSuccessful
+            }
+        } catch (e: IOException) {
+            Log.w("MobileUse.BackendApi", "$source ingest failed: ${e.message}")
+            false
+        }
     }
 
     private fun post(url: String, body: JSONObject) {

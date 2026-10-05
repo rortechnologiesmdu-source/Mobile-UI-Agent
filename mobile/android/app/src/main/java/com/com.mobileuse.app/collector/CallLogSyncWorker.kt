@@ -13,7 +13,10 @@ import java.util.Locale
 import java.util.TimeZone
 
 private const val PREFS_NAME = "mobileuse_collector"
-private const val KEY_LAST_SYNCED_CALL = "last_synced_call_date"
+// v2: earlier versions advanced the marker even when the upload failed. Renamed so
+// upgrading installs backfill once, bounded to the dashboard's call-log window.
+private const val KEY_LAST_SYNCED_CALL = "last_synced_call_date_v2"
+private const val BACKFILL_WINDOW_MS = 48L * 60 * 60 * 1000
 
 private fun callTypeLabel(type: Int): String = when (type) {
     CallLog.Calls.INCOMING_TYPE -> "incoming"
@@ -22,8 +25,8 @@ private fun callTypeLabel(type: Int): String = when (type) {
     else -> "other"
 }
 
-// Same "start from now on first run" pattern as SmsSyncWorker — see that file's
-// comment. A fresh install should never backfill someone's entire call history.
+// Same bounded-backfill pattern as SmsSync: the first run picks up only the last 48h
+// (the dashboard's window), never someone's entire call history.
 class CallLogSyncWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
 
     private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
@@ -39,11 +42,8 @@ class CallLogSyncWorker(context: Context, params: WorkerParameters) : Worker(con
         }
 
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        if (!prefs.contains(KEY_LAST_SYNCED_CALL)) {
-            prefs.edit().putLong(KEY_LAST_SYNCED_CALL, System.currentTimeMillis()).apply()
-            return Result.success()
-        }
-        val lastSynced = prefs.getLong(KEY_LAST_SYNCED_CALL, 0L)
+        val backfillCutoff = System.currentTimeMillis() - BACKFILL_WINDOW_MS
+        val lastSynced = maxOf(prefs.getLong(KEY_LAST_SYNCED_CALL, 0L), backfillCutoff)
         var maxDateSeen = lastSynced
 
         val cursor = context.contentResolver.query(
@@ -54,6 +54,7 @@ class CallLogSyncWorker(context: Context, params: WorkerParameters) : Worker(con
             "${CallLog.Calls.DATE} ASC",
         ) ?: return Result.retry()
 
+        val events = mutableListOf<Pair<JSONObject, String>>()
         cursor.use {
             val numberIdx = it.getColumnIndexOrThrow(CallLog.Calls.NUMBER)
             val typeIdx = it.getColumnIndexOrThrow(CallLog.Calls.TYPE)
@@ -67,11 +68,12 @@ class CallLogSyncWorker(context: Context, params: WorkerParameters) : Worker(con
                     .put("type", callTypeLabel(it.getInt(typeIdx)))
                     .put("duration", it.getInt(durationIdx))
 
-                BackendApi.ingestEvent("call_log", payload, isoFormat.format(Date(date)))
+                events.add(payload to isoFormat.format(Date(date)))
                 if (date > maxDateSeen) maxDateSeen = date
             }
         }
 
+        if (!BackendApi.ingestEventsBlocking("call_log", events)) return Result.retry()
         if (maxDateSeen > lastSynced) {
             prefs.edit().putLong(KEY_LAST_SYNCED_CALL, maxDateSeen).apply()
         }

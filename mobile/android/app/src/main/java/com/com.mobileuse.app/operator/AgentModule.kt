@@ -10,12 +10,86 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.WritableArray
+import com.mobileuse.app.BuildConfig
 import org.json.JSONArray
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
+
+private const val WAIT_MS = 1500L
 
 class AgentModule(reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
 
+    // Own scheduler rather than the main Looper, for the same reason as the
+    // screenshot watchdog in MobileUseAccessibilityService.
+    private val settleScheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
+
     override fun getName() = "AgentModule"
+
+    // Waits for the UI to settle after an action. Done natively because React
+    // Native pauses JS timers while the app is backgrounded — which is exactly
+    // when the agent is operating other apps — so a JS setTimeout here would
+    // stall the observe-decide-act loop after the first action that leaves the app.
+    @ReactMethod
+    fun settle(ms: Double, promise: Promise) {
+        settleScheduler.schedule({ promise.resolve(null) }, ms.toLong(), TimeUnit.MILLISECONDS)
+    }
+
+    // Backend base URL, set at build time from MOBILEUSE_BACKEND_URL in android/gradle.properties.
+    @ReactMethod(isBlockingSynchronousMethod = true)
+    fun getBackendUrl(): String = BuildConfig.BACKEND_URL
+
+    // Apps with a launcher icon, as [{ label, package }], so the model's "open <app>" can
+    // be resolved against what's actually installed instead of a hand-kept list.
+    @ReactMethod
+    fun getInstalledApps(promise: Promise) {
+        try {
+            val pm = reactApplicationContext.packageManager
+            val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            val apps = Arguments.createArray()
+            pm.queryIntentActivities(launcherIntent, 0)
+                .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
+                .filter { (pkg, _) -> pkg != reactApplicationContext.packageName }
+                .distinctBy { (pkg, _) -> pkg }
+                .sortedBy { (_, label) -> label.lowercase() }
+                .forEach { (pkg, label) ->
+                    apps.pushMap(Arguments.createMap().apply {
+                        putString("label", label)
+                        putString("package", pkg)
+                    })
+                }
+            promise.resolve(apps)
+        } catch (e: Exception) {
+            Log.w("MobileUse.AgentModule", "getInstalledApps failed: ${e.message}")
+            promise.resolve(Arguments.createArray())
+        }
+    }
+
+    // Shows an Allow/Cancel prompt over the current app; resolves true only if allowed.
+    @ReactMethod
+    fun confirmAction(message: String, promise: Promise) {
+        val service = MobileUseAccessibilityService.instance
+        if (service == null) {
+            promise.resolve(false)
+            return
+        }
+        service.showConfirmation(message) { allowed -> promise.resolve(allowed) }
+    }
+
+    // Returns the user to this app (the Agent screen) after a run ends. Started from the
+    // accessibility service's context, which Android allows from the background.
+    @ReactMethod
+    fun bringAppToFront() {
+        val context = reactApplicationContext
+        val intent = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        try {
+            (MobileUseAccessibilityService.instance ?: context).startActivity(intent)
+        } catch (e: Exception) {
+            Log.w("MobileUse.AgentModule", "bringAppToFront failed: ${e.message}")
+        }
+    }
 
     @ReactMethod
     fun checkAccessibilityEnabled(promise: Promise) {
@@ -57,6 +131,11 @@ class AgentModule(reactContext: ReactApplicationContext) :
                 result.putString("currentApp", currentApp)
                 result.putArray("accessibilityTree", jsonArrayToWritableArray(tree))
                 result.putString("screenshotBase64", base64 ?: "")
+                // Same basis toScreenPoint() uses, so the backend can map a 0-1 point
+                // to the accessibility node it lands on.
+                val metrics = reactApplicationContext.resources.displayMetrics
+                result.putInt("screenWidth", metrics.widthPixels)
+                result.putInt("screenHeight", metrics.heightPixels)
                 promise.resolve(result)
             }
         } catch (e: Exception) {
@@ -79,6 +158,21 @@ class AgentModule(reactContext: ReactApplicationContext) :
         try {
             val handled = when (type) {
                 "tap" -> handleTap(service, action)
+                "long_press" -> {
+                    val point = action.getMap("target")?.getMap("point")
+                    if (point != null) {
+                        val (x, y) = toScreenPoint(point)
+                        service.dispatchLongPress(x, y)
+                    } else {
+                        false
+                    }
+                }
+                // Gives a loading screen time to finish before the next observation.
+                "wait" -> {
+                    settleScheduler.schedule({ promise.resolve(true) }, WAIT_MS, TimeUnit.MILLISECONDS)
+                    Log.i("MobileUse.AgentModule", "executeAction wait: ${WAIT_MS}ms")
+                    return
+                }
                 "type" -> {
                     val text = action.getString("text") ?: ""
                     val node = service.findFocusedEditableNode()
@@ -113,10 +207,17 @@ class AgentModule(reactContext: ReactApplicationContext) :
         if (node != null && service.performClick(node)) return true
 
         val point = target?.getMap("point") ?: return false
-        val metrics = reactApplicationContext.resources.displayMetrics
-        val x = (point.getDouble("x") * metrics.widthPixels).toFloat()
-        val y = (point.getDouble("y") * metrics.heightPixels).toFloat()
+        val (x, y) = toScreenPoint(point)
         return service.dispatchTap(x, y)
+    }
+
+    // Converts a 0-1 fractional point into screen pixels.
+    private fun toScreenPoint(point: ReadableMap): Pair<Float, Float> {
+        val metrics = reactApplicationContext.resources.displayMetrics
+        return Pair(
+            (point.getDouble("x") * metrics.widthPixels).toFloat(),
+            (point.getDouble("y") * metrics.heightPixels).toFloat(),
+        )
     }
 
     private fun launchApp(packageName: String): Boolean {

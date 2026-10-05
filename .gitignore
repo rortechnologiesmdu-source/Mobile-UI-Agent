@@ -28,3 +28,6 @@ mobile/.expo/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Android CMake staging dir from build.gradle (Windows-style path, created on macOS builds)
+mobile/android/app/C:/

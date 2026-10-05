@@ -15,7 +15,28 @@ export type Observation = {
   currentApp: string;
   accessibilityTree: AccessibilityNode[];
   screenshotBase64: string;
+  screenWidth: number;
+  screenHeight: number;
 };
+
+export function getBackendUrl(): string {
+  return AgentModule.getBackendUrl();
+}
+
+// Allow/Cancel prompt shown over whatever app is in front.
+export function confirmAction(message: string): Promise<boolean> {
+  return AgentModule.confirmAction(message);
+}
+
+export type InstalledApp = { label: string; package: string };
+
+export function getInstalledApps(): Promise<InstalledApp[]> {
+  return AgentModule.getInstalledApps();
+}
+
+export function bringAppToFront(): void {
+  AgentModule.bringAppToFront();
+}
 
 // Safety net on top of the native-side watchdog (see MobileUseAccessibilityService.kt) —
 // if a native promise never settles for any reason, the agent loop must still be able
@@ -50,4 +71,9 @@ export function getObservation(): Promise<Observation> {
 
 export function executeAction(action: Record<string, unknown>): Promise<boolean> {
   return withTimeout(AgentModule.executeAction(action), 8000, 'executeAction');
+}
+
+// Native delay — unlike setTimeout, keeps running while this app is backgrounded.
+export function settle(ms: number): Promise<void> {
+  return AgentModule.settle(ms);
 }

@@ -88,12 +88,18 @@ android {
     }
 
     namespace "com.mobileuse.app"
+    buildFeatures {
+        buildConfig true
+    }
     defaultConfig {
         applicationId "com.mobileuse.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        // Where the phone reaches the Node backend. Set MOBILEUSE_BACKEND_URL in
+        // gradle.properties to the Mac's Wi-Fi address to run without a USB cable.
+        buildConfigField "String", "BACKEND_URL", "\"${project.findProperty('MOBILEUSE_BACKEND_URL') ?: 'http://localhost:4000'}\""
     }
     signingConfigs {
         debug {

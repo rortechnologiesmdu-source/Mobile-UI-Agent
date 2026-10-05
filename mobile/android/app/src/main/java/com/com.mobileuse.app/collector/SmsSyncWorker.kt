@@ -8,8 +8,5 @@ import androidx.work.WorkerParameters
 // CollectorForegroundService) misses an update or the service was killed and
 // restarted — see SmsSync for the actual sync logic shared by both paths.
 class SmsSyncWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
-    override fun doWork(): Result {
-        SmsSync.sync(applicationContext)
-        return Result.success()
-    }
+    override fun doWork(): Result = if (SmsSync.sync(applicationContext)) Result.success() else Result.retry()
 }

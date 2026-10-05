@@ -23,14 +23,23 @@ import {
   openAccessibilitySettings,
   getObservation,
   executeAction,
+  settle,
+  confirmAction,
+  bringAppToFront,
+  getInstalledApps,
 } from '../native/agent';
 
 const STEP_DELAY_MS = 800;
+const FINAL_ACTION_SETTLE_MS = 2000;
 
 function describeAction(action: AgentAction): string {
   switch (action.action) {
     case 'tap':
-      return `Tapping "${action.target.description}"`;
+      return action.target.description ? `Tapping "${action.target.description}"` : 'Tapping';
+    case 'long_press':
+      return 'Long-pressing';
+    case 'wait':
+      return 'Waiting for the screen';
     case 'type':
       return `Typing "${action.text}"`;
     case 'swipe':
@@ -83,14 +92,30 @@ export default function AgentScreen() {
       setStepNumber(result.stepNumber);
       setStatusLabel(describeAction(result.action));
 
+      // Sending can't be undone: ask first, and the send is the last step either way.
+      if (result.confirm) {
+        setStatusLabel('Waiting for your confirmation…');
+        if (await confirmAction(result.confirm)) {
+          await executeAction(result.action as unknown as Record<string, unknown>);
+          // Let the app actually send before we leave it for the Agent screen.
+          await settle(FINAL_ACTION_SETTLE_MS);
+          setResultText(result.resultText ?? 'Sent.');
+        } else {
+          await stopAgentRun(runId, 'Cancelled by you before sending.');
+          setResultText('Cancelled before sending.');
+        }
+        return;
+      }
+
       if (result.action.action === 'done' || result.status !== 'running') {
-        if (result.action.action === 'done') setResultText(result.action.result);
-        break;
+        setResultText(result.action.action === 'done' ? result.action.result : result.resultText);
+        return;
       }
 
       await executeAction(result.action as unknown as Record<string, unknown>);
-      await new Promise((resolve) => setTimeout(resolve, STEP_DELAY_MS));
+      await settle(STEP_DELAY_MS);
     }
+    await stopAgentRun(runId, 'Stopped by you.');
   }, []);
 
   const handleRunAgent = async () => {
@@ -107,7 +132,9 @@ export default function AgentScreen() {
 
     let runId: string | null = null;
     try {
-      const started = await startAgentRun(goal);
+      // Lets the model open apps by name based on what's actually installed.
+      const apps = await getInstalledApps().catch(() => []);
+      const started = await startAgentRun(goal, apps);
       runId = started.runId;
       await runLoop(runId);
     } catch (err: any) {
@@ -116,6 +143,8 @@ export default function AgentScreen() {
     } finally {
       setRunning(false);
       refreshHistory();
+      // The agent usually ends inside another app — come back to show the result.
+      bringAppToFront();
     }
   };
 

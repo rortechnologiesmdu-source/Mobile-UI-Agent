@@ -3,15 +3,24 @@ package com.mobileuse.app.operator
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.Path
+import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Base64
 import android.util.Log
 import android.view.Display
+import android.view.Gravity
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -24,6 +33,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 private const val TAG = "MobileUse.Operator"
 private const val MAX_TREE_NODES = 400
 private const val MAX_SCREENSHOT_WIDTH = 540
+private const val CONFIRM_TIMEOUT_S = 60L
+private const val OVERLAY_GONE_DELAY_MS = 300L
 
 // Agent 2's "body" — perception (accessibility tree + screenshot) and actuation
 // (tap/type/swipe/launch/back/home). No intelligence here; AgentModule bridges
@@ -36,6 +47,8 @@ class MobileUseAccessibilityService : AccessibilityService() {
     // tied to the main Looper, since a hang there (observed on this device)
     // would otherwise take the safeguard down with it.
     private val watchdog: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
+    // UI work (the confirmation overlay) has to run on the main thread.
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     companion object {
         var instance: MobileUseAccessibilityService? = null
@@ -147,9 +160,14 @@ class MobileUseAccessibilityService : AccessibilityService() {
     fun performClick(node: AccessibilityNodeInfo): Boolean =
         node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
 
-    fun dispatchTap(x: Float, y: Float): Boolean {
+    fun dispatchTap(x: Float, y: Float): Boolean = dispatchPress(x, y, 50)
+
+    // Held past Android's long-press threshold (ViewConfiguration default ~400-500ms).
+    fun dispatchLongPress(x: Float, y: Float): Boolean = dispatchPress(x, y, 600)
+
+    private fun dispatchPress(x: Float, y: Float, durationMs: Long): Boolean {
         val path = Path().apply { moveTo(x, y) }
-        val stroke = GestureDescription.StrokeDescription(path, 0, 50)
+        val stroke = GestureDescription.StrokeDescription(path, 0, durationMs)
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         return dispatchGesture(gesture, null, null)
     }
@@ -225,6 +243,67 @@ class MobileUseAccessibilityService : AccessibilityService() {
             searchEditable(root)
         }
         return found
+    }
+
+    // Asks the user to allow an action, on top of whatever app is showing. Drawn as an
+    // accessibility overlay so it needs no extra permission. Unanswered counts as "no".
+    fun showConfirmation(message: String, onResult: (Boolean) -> Unit) {
+        mainHandler.post {
+            val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+            val pad = (16 * resources.displayMetrics.density).toInt()
+            val panel = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(pad, pad, pad, pad)
+                setBackgroundColor(Color.parseColor("#F0202124"))
+            }
+            val settled = AtomicBoolean(false)
+            // The panel sits over the bottom of the screen — often right on the Send button
+            // the agent is about to tap — so it must be fully gone before the result is
+            // reported, or the agent's tap lands on the vanishing panel.
+            fun settle(allowed: Boolean) {
+                if (!settled.compareAndSet(false, true)) return
+                mainHandler.post {
+                    runCatching { windowManager.removeViewImmediate(panel) }
+                    Log.i(TAG, "showConfirmation: allowed=$allowed")
+                    mainHandler.postDelayed({ onResult(allowed) }, OVERLAY_GONE_DELAY_MS)
+                }
+            }
+            panel.addView(TextView(this).apply {
+                text = message
+                setTextColor(Color.WHITE)
+                textSize = 16f
+            })
+            val buttons = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.END
+            }
+            buttons.addView(Button(this).apply {
+                text = "Cancel"
+                setOnClickListener { settle(false) }
+            })
+            buttons.addView(Button(this).apply {
+                text = "Allow"
+                setOnClickListener { settle(true) }
+            })
+            panel.addView(buttons)
+
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT,
+            ).apply { gravity = Gravity.BOTTOM }
+
+            try {
+                windowManager.addView(panel, params)
+            } catch (e: Exception) {
+                Log.w(TAG, "showConfirmation: overlay failed: ${e.message}")
+                settle(false)
+                return@post
+            }
+            watchdog.schedule({ settle(false) }, CONFIRM_TIMEOUT_S, TimeUnit.SECONDS)
+        }
     }
 
     fun goBack(): Boolean = performGlobalAction(GLOBAL_ACTION_BACK)

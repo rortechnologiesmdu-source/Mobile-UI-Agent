@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The backend runs on a Mac on the local network over plain HTTP
+     (MOBILEUSE_BACKEND_URL), which release builds otherwise block. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

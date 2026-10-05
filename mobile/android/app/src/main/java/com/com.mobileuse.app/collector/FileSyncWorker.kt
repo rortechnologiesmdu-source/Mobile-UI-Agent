@@ -14,7 +14,10 @@ import java.util.Locale
 import java.util.TimeZone
 
 private const val PREFS_NAME = "mobileuse_collector"
-private const val KEY_LAST_SYNCED_FILE = "last_synced_file_date_seconds"
+// v2: earlier versions advanced the marker even when the upload failed. Renamed so
+// upgrading installs backfill once, bounded to the dashboard's 7-day files window.
+private const val KEY_LAST_SYNCED_FILE = "last_synced_file_date_seconds_v2"
+private const val BACKFILL_WINDOW_S = 7L * 24 * 60 * 60
 
 // "Files" here means recently-added photos via MediaStore's Images collection.
 // Scoped storage on modern Android blocks broad filesystem/Downloads access
@@ -42,11 +45,8 @@ class FileSyncWorker(context: Context, params: WorkerParameters) : Worker(contex
         if (!hasMediaPermission(context)) return Result.success()
 
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        if (!prefs.contains(KEY_LAST_SYNCED_FILE)) {
-            prefs.edit().putLong(KEY_LAST_SYNCED_FILE, System.currentTimeMillis() / 1000).apply()
-            return Result.success()
-        }
-        val lastSynced = prefs.getLong(KEY_LAST_SYNCED_FILE, 0L)
+        val backfillCutoff = System.currentTimeMillis() / 1000 - BACKFILL_WINDOW_S
+        val lastSynced = maxOf(prefs.getLong(KEY_LAST_SYNCED_FILE, 0L), backfillCutoff)
         var maxDateSeen = lastSynced
 
         val cursor = context.contentResolver.query(
@@ -62,6 +62,7 @@ class FileSyncWorker(context: Context, params: WorkerParameters) : Worker(contex
             "${MediaStore.Images.Media.DATE_ADDED} ASC",
         ) ?: return Result.retry()
 
+        val events = mutableListOf<Pair<JSONObject, String>>()
         cursor.use {
             val nameIdx = it.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
             val sizeIdx = it.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
@@ -75,11 +76,12 @@ class FileSyncWorker(context: Context, params: WorkerParameters) : Worker(contex
                     .put("size", it.getLong(sizeIdx))
                     .put("mimeType", it.getString(mimeIdx) ?: "")
 
-                BackendApi.ingestEvent("file", payload, isoFormat.format(Date(dateAddedSeconds * 1000)))
+                events.add(payload to isoFormat.format(Date(dateAddedSeconds * 1000)))
                 if (dateAddedSeconds > maxDateSeen) maxDateSeen = dateAddedSeconds
             }
         }
 
+        if (!BackendApi.ingestEventsBlocking("file", events)) return Result.retry()
         if (maxDateSeen > lastSynced) {
             prefs.edit().putLong(KEY_LAST_SYNCED_FILE, maxDateSeen).apply()
         }
