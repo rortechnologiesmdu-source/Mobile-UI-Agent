@@ -39,8 +39,13 @@ final class IOSAgentController {
         self.timeout = timeout
     }
 
+    // Creates the run itself (Terminal: run-task.sh).
     func run(goal: String) throws -> Outcome {
-        let runId = try backend.startRun(goal: goal, apps: KnownApps.all)
+        try execute(runId: backend.startRun(goal: goal, apps: KnownApps.all), goal: goal)
+    }
+
+    // Runs a run that already exists (one the MobileUse Agent app queued).
+    func execute(runId: String, goal: String) throws -> Outcome {
         self.runId = runId
         let deadline = Date().addingTimeInterval(timeout)
         print("[AGENT] run \(runId): \"\(goal)\"")
@@ -55,6 +60,9 @@ final class IOSAgentController {
             let response: StepResponse
             do {
                 response = try backend.step(runId: runId, observation: observation)
+            } catch let error as BackendError where error.statusCode == 409 {
+                // The run is no longer running: the user tapped Stop in the app.
+                return .stopped("Stopped by you.")
             } catch {
                 return stop(runId, .failed("Stopped: NETWORK_ERROR or MODEL_ERROR: \(error)"))
             }
@@ -87,7 +95,7 @@ final class IOSAgentController {
     }
 
     private func record(_ number: Int, _ observation: Observation, _ action: AgentAction, _ detail: String, _ decideMs: Int) {
-        let step = Step(number: number, app: observation.currentApp, action: describe(action), detail: detail, decideMs: decideMs)
+        let step = Step(number: number, app: observation.currentApp, action: action.summary, detail: detail, decideMs: decideMs)
         steps.append(step)
         print("[AGENT] step \(number) [\(step.app)] \(step.action) -> \(detail) (decide \(decideMs)ms)")
     }
@@ -102,18 +110,5 @@ final class IOSAgentController {
             break
         }
         return outcome
-    }
-
-    private func describe(_ action: AgentAction) -> String {
-        switch action.action {
-        case "tap", "long_press":
-            if let p = action.target?.point { return "\(action.action) (\(round(p.x * 1000) / 1000), \(round(p.y * 1000) / 1000))" }
-            return "\(action.action) \"\(action.target?.description ?? "")\""
-        case "type": return "type \"\(action.text ?? "")\""
-        case "swipe": return "swipe \(action.direction ?? "")"
-        case "launch_app": return "open \(action.package ?? "")"
-        case "done": return "done: \(action.result ?? "")"
-        default: return action.action
-        }
     }
 }

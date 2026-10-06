@@ -4,6 +4,8 @@
 // resolves to one of these bundle IDs.
 enum KnownApps {
     static let springboard = "com.apple.springboard"
+    // The MobileUse Agent app (AgentRunnerHost): where tasks are typed and results shown.
+    static let host = "com.mobileuse.agentrunner.host"
     // Home-screen search; a separate process from SpringBoard.
     static let spotlight = "com.apple.Spotlight"
 

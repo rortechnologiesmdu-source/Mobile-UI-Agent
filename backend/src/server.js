@@ -12,7 +12,14 @@ const agent2Router = require('./routes/agent2');
 
 const app = express();
 app.use(cors());
-app.use(morgan('dev'));
+// The iOS runner and app poll several times a second (task queue, runner status, run
+// progress); logging every poll would bury the real requests.
+// originalUrl: routers rewrite req.url to their mount-relative path.
+const isPoll = (req) =>
+  req.originalUrl.startsWith('/api/agent2/runs/claim') ||
+  req.originalUrl.startsWith('/api/agent2/runner') ||
+  (req.method === 'GET' && /^\/api\/agent2\/runs\/[0-9a-f]{24}$/.test(req.originalUrl));
+app.use(morgan('dev', { skip: isPoll }));
 app.use(express.json({ limit: '15mb' })); // screenshots as base64 can be a few MB
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));

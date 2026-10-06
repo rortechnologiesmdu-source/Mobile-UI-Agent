@@ -27,6 +27,9 @@ final class IOSObservationProvider {
     // XCUITest has no "current app" API, so ask the known apps which one is in front;
     // none means the home screen (SpringBoard).
     func foregroundBundleID() -> String {
+        // The MobileUse Agent app itself is left out: once the runner has brought it to
+        // the front (after each task), XCUITest keeps reporting it as in front even after
+        // Home. The agent never acts inside it, and every task starts by pressing Home.
         var candidates = KnownApps.all.map(\.package) + [KnownApps.spotlight]
         if let last = lastLaunchedBundleID {
             candidates.removeAll { $0 == last }

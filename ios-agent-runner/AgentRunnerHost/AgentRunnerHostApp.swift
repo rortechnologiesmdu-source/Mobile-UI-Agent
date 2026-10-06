@@ -1,20 +1,14 @@
 import SwiftUI
 
-// Host app for the AgentRunnerUITests bundle. Xcode UI tests need a host app to
-// attach to; the agent itself drives other apps (Settings, Safari, ...) from the
-// test bundle via XCUIAutomation, so this app only shows a status screen.
+// MobileUse Agent for iOS: type a task, and the iOS runner (XCUITest on the Mac,
+// started by serve.sh) carries it out on this simulator with MAI-UI, through the
+// same Node backend as the Android app. This app never drives other apps itself —
+// iOS doesn't allow that; it queues tasks and shows their progress.
 @main
 struct AgentRunnerHostApp: App {
     var body: some Scene {
         WindowGroup {
-            VStack(spacing: 12) {
-                Text("MobileUse iOS Agent Runner")
-                    .font(.title2.bold())
-                Text("Started by Xcode UI tests. The agent operates other apps from the test runner.")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-            }
-            .padding()
+            AgentView()
         }
     }
 }

@@ -2,6 +2,7 @@ const express = require('express');
 const AgentRun = require('../models/AgentRun');
 const { decideNextAction } = require('../services/agentDecision');
 const { isRepeating, checkSend, REPEAT_LIMIT } = require('../services/safety');
+const { snapTapToNamedTarget } = require('../services/grounding');
 
 const router = express.Router();
 
@@ -11,6 +12,10 @@ const router = express.Router();
 const MAX_STEPS = 15;
 const MAX_REASON_CHARS = 600;
 const MAX_APPS = 300;
+const QUEUE_TIMEOUT_MS = 10 * 60 * 1000;
+const RUNNER_ALIVE_MS = 5000;
+// What the iOS app needs to show runs; leaves out the large per-step UI trees.
+const LIGHT_RUN_FIELDS = '-steps.accessibilityTree -apps';
 // A screen with fewer labelled elements than this right after a tap is usually still
 // transitioning (an app opening); deciding from it leads to blind repeat taps.
 const MIN_SETTLED_LABELS = 3;
@@ -36,11 +41,49 @@ router.post('/runs', async (req, res) => {
       .slice(0, MAX_APPS)
       .map((a) => ({ label: a.label.slice(0, 80), package: a.package.slice(0, 200) }));
 
-    const run = await AgentRun.create({ goal, status: 'running', steps: [], apps });
-    res.status(201).json({ runId: run._id });
+    // Android sends neither field, so its runs start 'running' exactly as before.
+    const platform = req.body.platform === 'ios' ? 'ios' : 'android';
+    const status = req.body.queued === true ? 'queued' : 'running';
+
+    const run = await AgentRun.create({ goal, platform, status, steps: [], apps });
+    res.status(201).json({ runId: run._id, status });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// When each platform's runner last asked for work — "is a runner connected?".
+const lastRunnerPoll = {};
+
+// The iOS runner polls this for the oldest queued run of its platform and takes it
+// (queued -> running). Queued runs nobody picked up in time are failed rather than
+// executed long after the user asked.
+router.post('/runs/claim', async (req, res) => {
+  try {
+    const platform = req.body?.platform === 'ios' ? 'ios' : 'android';
+    lastRunnerPoll[platform] = Date.now();
+    const staleBefore = new Date(Date.now() - QUEUE_TIMEOUT_MS);
+    await AgentRun.updateMany(
+      { platform, status: 'queued', createdAt: { $lt: staleBefore } },
+      { status: 'failed', resultText: `No ${platform} runner picked this up within ${QUEUE_TIMEOUT_MS / 60000} minutes.` }
+    );
+    const run = await AgentRun.findOneAndUpdate(
+      { platform, status: 'queued' },
+      { status: 'running' },
+      { sort: { createdAt: 1 }, new: true }
+    );
+    if (!run) return res.status(204).end();
+    console.log(`[agent2] ${platform} runner claimed run ${run._id}: ${run.goal}`);
+    res.json({ runId: run._id, goal: run.goal });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/runner', (req, res) => {
+  const platform = req.query.platform === 'ios' ? 'ios' : 'android';
+  const last = lastRunnerPoll[platform];
+  res.json({ platform, connected: Boolean(last && Date.now() - last < RUNNER_ALIVE_MS) });
 });
 
 // Given the current observation, returns the next action and appends the step to the run.
@@ -57,7 +100,7 @@ router.post('/runs/:id/step', async (req, res) => {
 
     const midTransition = isMidTransition(run.steps, accessibilityTree);
     if (midTransition) console.log(`[agent2] screen still changing in ${currentApp}; auto-wait`);
-    const { action, reason } = midTransition
+    const decided = midTransition
       ? { action: { action: 'wait' }, reason: 'The screen is still changing after the last action; waiting before deciding.' }
       : await decideNextAction({
           goal: run.goal,
@@ -67,6 +110,20 @@ router.post('/runs/:id/step', async (req, res) => {
           screenshotBase64,
           apps: run.apps || [],
         });
+    const { reason } = decided;
+    let { action } = decided;
+
+    // iOS only (Android behaves exactly as before): move a tap onto the element the
+    // model named when its point missed it.
+    if (run.platform === 'ios') {
+      const snap = snapTapToNamedTarget({ action, reason, accessibilityTree, screenWidth, screenHeight });
+      if (snap.snappedTo) {
+        console.log(
+          `[agent2] ios: tap moved onto "${snap.snappedTo}": ${JSON.stringify(action.target.point)} -> ${JSON.stringify(snap.action.target.point)}`
+        );
+        action = snap.action;
+      }
+    }
 
     const repeating = isRepeating(
       run.steps.map((s) => s.action),
@@ -127,10 +184,25 @@ router.post('/runs/:id/stop', async (req, res) => {
   }
 });
 
+// Without ?platform (the Android app) this returns exactly what it always has.
+// With ?platform=ios it returns only that platform's runs, without the UI trees.
 router.get('/runs', async (req, res) => {
   try {
-    const runs = await AgentRun.find().sort({ createdAt: -1 }).limit(20).lean();
+    const { platform } = req.query;
+    const query = platform ? AgentRun.find({ platform }).select(LIGHT_RUN_FIELDS) : AgentRun.find();
+    const runs = await query.sort({ createdAt: -1 }).limit(20).lean();
     res.json({ runs });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// One run with its steps (actions and reasoning), for following it live.
+router.get('/runs/:id', async (req, res) => {
+  try {
+    const run = await AgentRun.findById(req.params.id).select(LIGHT_RUN_FIELDS).lean();
+    if (!run) return res.status(404).json({ error: 'run not found' });
+    res.json({ run });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -72,7 +72,17 @@ final class IOSActionExecutor {
             return "opened \(bundleID)"
 
         case "press_home":
+            let previous = observations.foregroundBundleID()
             XCUIDevice.shared.press(.home)
+            // An app reports itself as in front for a moment after Home; wait until it
+            // has left, so the next observation reads the home screen, not the old app.
+            if previous != KnownApps.springboard {
+                let app = XCUIApplication(bundleIdentifier: previous)
+                let deadline = Date().addingTimeInterval(3)
+                while app.state == .runningForeground && Date() < deadline {
+                    Thread.sleep(forTimeInterval: 0.1)
+                }
+            }
             return "pressed Home"
 
         case "press_back":
@@ -104,15 +114,20 @@ final class IOSActionExecutor {
         XCUIApplication(bundleIdentifier: observations.foregroundBundleID())
     }
 
-    // The keyboard belongs to whichever process owns the focused field: the app in
-    // front, the home screen, or Spotlight (home-screen search runs in its own process).
+    // The app that owns the focused text field: the app in front, the home screen, or
+    // Spotlight (home-screen search runs in its own process). Checks keyboard focus,
+    // not the on-screen keyboard — typing on the Mac's keyboard switches the simulator
+    // to a hardware keyboard and hides the on-screen one.
     private func appShowingKeyboard() -> XCUIApplication? {
         let candidates = [observations.foregroundBundleID(), KnownApps.springboard, KnownApps.spotlight]
+        let focused = NSPredicate(format: "hasKeyboardFocus == true")
         let deadline = Date().addingTimeInterval(2)
         repeat {
             for bundleID in candidates {
                 let app = XCUIApplication(bundleIdentifier: bundleID)
-                if app.keyboards.firstMatch.exists { return app }
+                if app.keyboards.firstMatch.exists || app.descendants(matching: .any).matching(focused).firstMatch.exists {
+                    return app
+                }
             }
             Thread.sleep(forTimeInterval: 0.2)
         } while Date() < deadline

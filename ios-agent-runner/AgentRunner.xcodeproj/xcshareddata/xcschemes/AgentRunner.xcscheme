@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "5D6EE2BDF6BFDBC6BDFB38FA"
+               BlueprintIdentifier = "11F6F1A4CB0D2F676A821ED7"
                BuildableName = "AgentRunnerHost.app"
                BlueprintName = "AgentRunnerHost"
                ReferencedContainer = "container:AgentRunner.xcodeproj">
@@ -28,7 +28,7 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "D29F932B0B35652F6CA128AD"
+               BlueprintIdentifier = "CAFFAE03EF4106E304D6863A"
                BuildableName = "AgentRunnerUITests.xctest"
                BlueprintName = "AgentRunnerUITests"
                ReferencedContainer = "container:AgentRunner.xcodeproj">
@@ -46,7 +46,7 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "D29F932B0B35652F6CA128AD"
+               BlueprintIdentifier = "CAFFAE03EF4106E304D6863A"
                BuildableName = "AgentRunnerUITests.xctest"
                BlueprintName = "AgentRunnerUITests"
                ReferencedContainer = "container:AgentRunner.xcodeproj">

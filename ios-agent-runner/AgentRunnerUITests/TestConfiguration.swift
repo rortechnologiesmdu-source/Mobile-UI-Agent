@@ -22,6 +22,10 @@ enum TestConfiguration {
     // The task for AgentLoopTests, e.g. "Open Settings and open General".
     static var task: String? { env["AGENT_TASK"].flatMap { $0.isEmpty ? nil : $0 } }
     static var maxSteps: Int { int("AGENT_MAX_STEPS", default: 15) }
+
+    // Serve mode (serve.sh): wait for tasks from the MobileUse Agent app.
+    static var serve: Bool { env["AGENT_SERVE"] == "1" }
+    static var serveMinutes: Int { int("AGENT_SERVE_MINUTES", default: 240) }
     static var timeoutSeconds: Int { int("AGENT_TIMEOUT_SECONDS", default: 180) }
 
     static var maxNodes: Int { int("AGENT_MAX_NODES", default: 400) }

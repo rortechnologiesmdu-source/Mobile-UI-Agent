@@ -68,3 +68,42 @@ struct StepResponse: Codable {
     // Set when the action would send something or call someone; needs user approval.
     let confirm: String?
 }
+
+extension AgentAction {
+    // One-line description for logs and the app, e.g. "tap (0.25, 0.38)".
+    var summary: String {
+        switch action {
+        case "tap", "long_press":
+            if let p = target?.point { return "\(action) (\(round(p.x * 1000) / 1000), \(round(p.y * 1000) / 1000))" }
+            return "\(action) \"\(target?.description ?? "")\""
+        case "type": return "type \"\(text ?? "")\""
+        case "swipe": return "swipe \(direction ?? "")"
+        case "launch_app": return "open \(package ?? "")"
+        case "press_back": return "back"
+        case "press_home": return "home"
+        case "done": return "done: \(result ?? "")"
+        default: return action
+        }
+    }
+}
+
+// A run as returned by GET /api/agent2/runs?platform=ios and /runs/:id (UI trees left out).
+struct RunStep: Codable {
+    let stepNumber: Int?
+    let currentApp: String?
+    let action: AgentAction?
+    let reason: String?
+}
+
+struct AgentRun: Codable, Identifiable {
+    let _id: String
+    let goal: String
+    let platform: String?
+    let status: String
+    let resultText: String?
+    let steps: [RunStep]
+    let createdAt: String?
+
+    var id: String { _id }
+    var isActive: Bool { status == "queued" || status == "running" }
+}

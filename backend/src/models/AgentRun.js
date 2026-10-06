@@ -16,9 +16,12 @@ const AgentStepSchema = new mongoose.Schema(
 const AgentRunSchema = new mongoose.Schema(
   {
     goal: { type: String, required: true },
+    // Which device runs it. iOS runs started from the iOS app wait as 'queued' until
+    // the iOS runner (ios-agent-runner, XCUITest on the Mac) claims them.
+    platform: { type: String, enum: ['android', 'ios'], default: 'android' },
     status: {
       type: String,
-      enum: ['running', 'done', 'failed', 'stopped'],
+      enum: ['queued', 'running', 'done', 'failed', 'stopped'],
       default: 'running',
     },
     steps: { type: [AgentStepSchema], default: [] },
