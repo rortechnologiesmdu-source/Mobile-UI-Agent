@@ -36,3 +36,7 @@ mobile/android/app/C:/
 ios-agent-runner/build/
 ios-agent-runner/build-build.log
 ios-agent-runner/runs/
+
+# Local notes with this Mac's network address / device IDs (not for the public repo)
+run.txt
+Mobile_UI_Agent_MAI_UI_Next_Steps.md
