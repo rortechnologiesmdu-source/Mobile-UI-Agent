@@ -2,6 +2,7 @@ package com.mobileuse.app.collector
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.database.Cursor
 import android.provider.Telephony
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
@@ -42,9 +43,26 @@ object SmsSync {
         val lastSynced = maxOf(prefs.getLong(KEY_LAST_SYNCED_SMS, 0L), backfillCutoff)
         var maxDateSeen = lastSynced
 
+        // Full detail per message. Columns beyond address/body/date are read defensively
+        // (getColumnIndex, not ...OrThrow) since OEMs don't all expose every column.
+        val projection = arrayOf(
+            Telephony.Sms._ID,
+            Telephony.Sms.ADDRESS,
+            Telephony.Sms.BODY,
+            Telephony.Sms.DATE,
+            Telephony.Sms.DATE_SENT,
+            Telephony.Sms.TYPE,
+            Telephony.Sms.READ,
+            Telephony.Sms.SEEN,
+            Telephony.Sms.SUBJECT,
+            Telephony.Sms.SERVICE_CENTER,
+            Telephony.Sms.THREAD_ID,
+            Telephony.Sms.PERSON,
+            Telephony.Sms.PROTOCOL,
+        )
         val cursor = context.contentResolver.query(
             Telephony.Sms.Inbox.CONTENT_URI,
-            arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE),
+            projection,
             "${Telephony.Sms.DATE} > ?",
             arrayOf(lastSynced.toString()),
             "${Telephony.Sms.DATE} ASC",
@@ -52,15 +70,24 @@ object SmsSync {
 
         val events = mutableListOf<Pair<JSONObject, String>>()
         cursor.use {
-            val addressIdx = it.getColumnIndexOrThrow(Telephony.Sms.ADDRESS)
-            val bodyIdx = it.getColumnIndexOrThrow(Telephony.Sms.BODY)
             val dateIdx = it.getColumnIndexOrThrow(Telephony.Sms.DATE)
-
             while (it.moveToNext()) {
                 val date = it.getLong(dateIdx)
                 val payload = JSONObject()
-                    .put("sender", it.getString(addressIdx) ?: "")
-                    .put("body", it.getString(bodyIdx) ?: "")
+                    // Kept as "sender"/"body" so the existing dashboard still works.
+                    .put("sender", it.string(Telephony.Sms.ADDRESS) ?: "")
+                    .put("body", it.string(Telephony.Sms.BODY) ?: "")
+                    .put("smsId", it.longOrNull(Telephony.Sms._ID))
+                    .put("date", date)
+                    .put("dateSent", it.longOrNull(Telephony.Sms.DATE_SENT))
+                    .put("type", it.intOrNull(Telephony.Sms.TYPE))   // 1 = inbox
+                    .put("read", it.intOrNull(Telephony.Sms.READ))
+                    .put("seen", it.intOrNull(Telephony.Sms.SEEN))
+                    .put("subject", it.string(Telephony.Sms.SUBJECT))
+                    .put("serviceCenter", it.string(Telephony.Sms.SERVICE_CENTER))
+                    .put("threadId", it.longOrNull(Telephony.Sms.THREAD_ID))
+                    .put("person", it.longOrNull(Telephony.Sms.PERSON))
+                    .put("protocol", it.intOrNull(Telephony.Sms.PROTOCOL))
 
                 events.add(payload to isoFormat.format(Date(date)))
                 if (date > maxDateSeen) maxDateSeen = date
@@ -73,4 +100,20 @@ object SmsSync {
         }
         return true
     }
+}
+
+// OEMs vary in which SMS columns they expose; read by name and tolerate missing/null.
+private fun Cursor.string(column: String): String? {
+    val idx = getColumnIndex(column)
+    return if (idx >= 0 && !isNull(idx)) getString(idx) else null
+}
+
+private fun Cursor.longOrNull(column: String): Long? {
+    val idx = getColumnIndex(column)
+    return if (idx >= 0 && !isNull(idx)) getLong(idx) else null
+}
+
+private fun Cursor.intOrNull(column: String): Int? {
+    val idx = getColumnIndex(column)
+    return if (idx >= 0 && !isNull(idx)) getInt(idx) else null
 }

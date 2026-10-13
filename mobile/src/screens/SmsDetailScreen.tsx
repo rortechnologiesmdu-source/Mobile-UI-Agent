@@ -9,6 +9,7 @@ export default function SmsDetailScreen() {
       limit={100}
       emptyLabel="No SMS in the last 5 days."
       pollIntervalMs={5000}
+      showRawText
     />
   );
 }
