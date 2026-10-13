@@ -1,5 +1,6 @@
 const express = require('express');
 const RawEvent = require('../models/RawEvent');
+const MobileAgentResult = require('../models/MobileAgentResult');
 const { categorizeEvents } = require('../services/categorize');
 
 const router = express.Router();
@@ -63,6 +64,27 @@ router.get('/summary', async (req, res) => {
       .lean();
 
     res.json({ tiles, events: recentEvents });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Dashboard -> Mobile Agent: results of Mobile UI Agent runs, from the existing `mobileagent`
+// collection (one record per run: task, final data, collected items). Newest first, paged.
+router.get('/mobile-agent', async (req, res) => {
+  try {
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const [records, total] = await Promise.all([
+      MobileAgentResult.find()
+        .sort({ finishedAt: -1, _id: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .select('runId task status resultText data items steps platform startedAt finishedAt')
+        .lean(),
+      MobileAgentResult.countDocuments(),
+    ]);
+    res.json({ records, total, page, limit, hasMore: page * limit < total });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

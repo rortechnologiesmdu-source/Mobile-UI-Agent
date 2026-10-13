@@ -14,6 +14,8 @@ import {
   startAgentRun,
   stepAgentRun,
   stopAgentRun,
+  resumeAgentRun,
+  setAppAccessInBackground,
   listAgentRuns,
   AgentAction,
   AgentRunSummary,
@@ -27,6 +29,7 @@ import {
   confirmAction,
   bringAppToFront,
   getInstalledApps,
+  getHomePackage,
 } from '../native/agent';
 
 const STEP_DELAY_MS = 800;
@@ -92,6 +95,27 @@ export default function AgentScreen() {
       setStepNumber(result.stepNumber);
       setStatusLabel(describeAction(result.action));
 
+      // The task needs an app that's disabled in Installed Apps & Access Control. Nothing was
+      // done in it; ask. Allow saves the setting and the backend re-checks it before resuming.
+      if (result.status === 'needs_approval' && result.approval) {
+        const { package: pkg, label, message } = result.approval;
+        setStatusLabel(`Waiting for access to ${label}…`);
+        if (!(await confirmAction(`App Access Required\n\n${message}`))) {
+          await stopAgentRun(runId, `Access to ${label} was not allowed.`);
+          setResultText(`Stopped: access to ${label} was not allowed. Nothing was done in it.`);
+          return;
+        }
+        try {
+          await setAppAccessInBackground(pkg, true, label);
+          await resumeAgentRun(runId);
+        } catch (err: any) {
+          await stopAgentRun(runId, `Couldn't allow ${label}: ${err.message}`).catch(() => {});
+          setErrorText(`Couldn't save access for ${label}, so the run stopped: ${err.message}`);
+          return;
+        }
+        continue;
+      }
+
       // Sending can't be undone: ask first, and the send is the last step either way.
       if (result.confirm) {
         setStatusLabel('Waiting for your confirmation…');
@@ -134,7 +158,8 @@ export default function AgentScreen() {
     try {
       // Lets the model open apps by name based on what's actually installed.
       const apps = await getInstalledApps().catch(() => []);
-      const started = await startAgentRun(goal, apps);
+      const homePackage = await getHomePackage().catch(() => '');
+      const started = await startAgentRun(goal, apps, homePackage);
       runId = started.runId;
       await runLoop(runId);
     } catch (err: any) {

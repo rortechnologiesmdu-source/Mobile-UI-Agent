@@ -9,6 +9,9 @@ const ingestRouter = require('./routes/ingest');
 const dashboardRouter = require('./routes/dashboard');
 const eventsRouter = require('./routes/events');
 const agent2Router = require('./routes/agent2');
+const smsRouter = require('./routes/sms');
+const appsRouter = require('./routes/apps');
+const gmailRouter = require('./routes/gmail');
 
 const app = express();
 app.use(cors());
@@ -27,6 +30,9 @@ app.use('/api/ingest', ingestRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/events', eventsRouter);
 app.use('/api/agent2', agent2Router);
+app.use('/api/sms', smsRouter);
+app.use('/api/apps', appsRouter);
+app.use('/api/gmail', gmailRouter);
 
 const PORT = process.env.PORT || 4000;
 

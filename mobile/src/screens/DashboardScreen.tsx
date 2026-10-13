@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, RefreshControl, ScrollView, Pressable } from 'r
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { getDashboardSummary, DashboardTile, EventSource } from '../api/client';
 import HealthCheckBanner from './HealthCheckBanner';
+import { ApiSection, BrowserAgentSection, MobileAgentSection } from './DashboardSections';
 import type { DashboardStackParamList } from '../navigation/types';
 
 type Props = {
@@ -21,10 +22,13 @@ export default function DashboardScreen({ navigation }: Props) {
   const [tiles, setTiles] = useState<Record<string, DashboardTile>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumped on pull-to-refresh so the other sections reload too.
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setRefreshKey((k) => k + 1);
     try {
       const res = await getDashboardSummary();
       setTiles(res.tiles);
@@ -48,7 +52,8 @@ export default function DashboardScreen({ navigation }: Props) {
 
       {error && <Text style={styles.error}>{error}</Text>}
 
-      <Text style={styles.sectionTitle}>Today's Summary</Text>
+      {/* Data grouped by how it was collected: Device, Mobile Agent, API, Browser Agent. */}
+      <Text style={styles.sectionTitle}>📱 Device</Text>
       <View style={styles.grid}>
         {TILES.map((tile) => {
           const data = tiles[tile.source];
@@ -68,6 +73,11 @@ export default function DashboardScreen({ navigation }: Props) {
           );
         })}
       </View>
+
+      <MobileAgentSection refreshKey={refreshKey} onSeeAll={() => navigation.navigate('MobileAgentResults')} />
+      <ApiSection refreshKey={refreshKey} onSeeAll={() => navigation.navigate('Emails')} />
+      <BrowserAgentSection />
+      <View style={{ height: 24 }} />
     </ScrollView>
   );
 }

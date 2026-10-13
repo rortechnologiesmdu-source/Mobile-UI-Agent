@@ -1,7 +1,13 @@
 package com.mobileuse.app.operator
 
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.Drawable
+import android.os.Build
 import android.provider.Settings
+import android.util.Base64
 import android.util.Log
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -12,6 +18,7 @@ import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.WritableArray
 import com.mobileuse.app.BuildConfig
 import org.json.JSONArray
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
@@ -64,6 +71,66 @@ class AgentModule(reactContext: ReactApplicationContext) :
             Log.w("MobileUse.AgentModule", "getInstalledApps failed: ${e.message}")
             promise.resolve(Arguments.createArray())
         }
+    }
+
+    // Installed Apps & Access Control: apps with a launcher icon, as [{ package, label,
+    // androidCategory, icon }]. androidCategory is Android's own hint (ApplicationInfo.category,
+    // API 26+; -1 when the app doesn't declare one); icon is a small base64 PNG, or null.
+    // Built off the UI thread — drawing every icon takes a moment.
+    @ReactMethod
+    fun listApps(promise: Promise) {
+        Thread {
+            try {
+                val pm = reactApplicationContext.packageManager
+                val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                val apps = Arguments.createArray()
+                pm.queryIntentActivities(launcherIntent, 0)
+                    .filter { it.activityInfo.packageName != reactApplicationContext.packageName }
+                    .distinctBy { it.activityInfo.packageName }
+                    .map { it to it.loadLabel(pm).toString() }
+                    .sortedBy { (_, label) -> label.lowercase() }
+                    .forEach { (info, label) ->
+                        apps.pushMap(Arguments.createMap().apply {
+                            putString("package", info.activityInfo.packageName)
+                            putString("label", label)
+                            putInt(
+                                "androidCategory",
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) info.activityInfo.applicationInfo.category else -1,
+                            )
+                            putString("icon", iconBase64(info.loadIcon(pm)))
+                        })
+                    }
+                promise.resolve(apps)
+            } catch (e: Exception) {
+                Log.w("MobileUse.AgentModule", "listApps failed: ${e.message}")
+                promise.reject("LIST_APPS_FAILED", e.message, e)
+            }
+        }.start()
+    }
+
+    private fun iconBase64(drawable: Drawable?): String? {
+        if (drawable == null) return null
+        return try {
+            val size = 96
+            val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            drawable.setBounds(0, 0, size, size)
+            drawable.draw(Canvas(bitmap))
+            val out = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            bitmap.recycle()
+            Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // The phone's home-screen app: the agent may always go home, so the backend never asks
+    // for approval for it.
+    @ReactMethod
+    fun getHomePackage(promise: Promise) {
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        val home = reactApplicationContext.packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+        promise.resolve(home?.activityInfo?.packageName ?: "")
     }
 
     // Shows an Allow/Cancel prompt over the current app; resolves true only if allowed.

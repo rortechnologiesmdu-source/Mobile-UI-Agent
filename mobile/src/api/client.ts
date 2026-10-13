@@ -86,10 +86,11 @@ export function getEventsBySource(source: EventSource, sinceHours = 48, limit = 
   );
 }
 
-export function startAgentRun(goal: string, apps: InstalledApp[] = []) {
+// homePackage: the phone's home-screen app — the agent may always go home.
+export function startAgentRun(goal: string, apps: InstalledApp[] = [], homePackage = '') {
   return request<{ runId: string }>('/agent2/runs', {
     method: 'POST',
-    body: JSON.stringify({ goal, apps }),
+    body: JSON.stringify({ goal, apps, homePackage }),
   });
 }
 
@@ -111,6 +112,10 @@ export function stepAgentRun(
   return requestInBackground<AgentStepResult>(`/agent2/runs/${runId}/step`, 'POST', observation);
 }
 
+// Set when the run paused (status 'needs_approval') because the task needs an app that's
+// disabled in Installed Apps & Access Control.
+export type AppApproval = { package: string; label: string; reason: string; message: string };
+
 export type AgentStepResult = {
   action: AgentAction;
   stepNumber: number;
@@ -118,7 +123,13 @@ export type AgentStepResult = {
   resultText: string | null;
   // Set when the action would send something; the user must allow it first.
   confirm: string | null;
+  approval?: AppApproval;
 };
+
+// After the user allowed the app: the backend re-checks the saved setting, then continues.
+export function resumeAgentRun(runId: string) {
+  return requestInBackground<{ status: string }>(`/agent2/runs/${runId}/resume`, 'POST');
+}
 
 export function stopAgentRun(runId: string, reason?: string) {
   return requestInBackground<{ status: string }>(
@@ -131,7 +142,7 @@ export function stopAgentRun(runId: string, reason?: string) {
 export type AgentRunSummary = {
   _id: string;
   goal: string;
-  status: 'running' | 'done' | 'failed' | 'stopped';
+  status: 'running' | 'needs_approval' | 'done' | 'failed' | 'stopped';
   resultText: string | null;
   steps: unknown[];
   createdAt: string;
@@ -139,4 +150,137 @@ export type AgentRunSummary = {
 
 export function listAgentRuns() {
   return request<{ runs: AgentRunSummary[] }>('/agent2/runs');
+}
+
+// ---------------------------------------------------------------------------
+// Installed Apps & Access Control
+// ---------------------------------------------------------------------------
+
+export type MethodStatus =
+  | 'available'
+  | 'requires_connection'
+  | 'requires_permission'
+  | 'unverified'
+  | 'unsupported'
+  | 'temporarily_unavailable';
+
+export type CollectionMethod = {
+  method: 'api' | 'mcp' | 'email' | 'phone_data' | 'mobile_use' | 'browser_use';
+  status: MethodStatus;
+  priority: number;
+  supported_data_types: string[];
+  reason: string;
+};
+
+export type AppAnalysis = {
+  status: 'none' | 'pending' | 'completed' | 'failed';
+  methods: CollectionMethod[];
+  error?: string | null;
+  analyzedAt?: string | null;
+};
+
+export type AppInfo = {
+  package: string;
+  label: string;
+  category: string;
+  categoryCorrected: boolean;
+  access: boolean;
+  accessUpdatedAt: string | null;
+  analysis: AppAnalysis;
+};
+
+type AppsResponse = { apps: AppInfo[]; categories: string[] };
+
+// Reports the phone's installed apps; new ones are added with access No.
+export function syncApps(apps: { package: string; label: string; androidCategory: number }[]) {
+  return request<AppsResponse>('/apps/sync', { method: 'POST', body: JSON.stringify({ apps }) });
+}
+
+export function getApps() {
+  return request<AppsResponse>('/apps');
+}
+
+// Resolves with the SAVED record; throws if it wasn't saved.
+export function setAppAccess(pkg: string, access: boolean, label?: string) {
+  return request<{ app: AppInfo }>(`/apps/${encodeURIComponent(pkg)}/access`, {
+    method: 'PUT',
+    body: JSON.stringify({ access, label }),
+  });
+}
+
+// Same, for the agent loop (runs while this app is in the background).
+export function setAppAccessInBackground(pkg: string, access: boolean, label?: string) {
+  return requestInBackground<{ app: AppInfo }>(`/apps/${encodeURIComponent(pkg)}/access`, 'PUT', { access, label });
+}
+
+// null = back to the automatic category.
+export function setAppCategory(pkg: string, category: string | null) {
+  return request<{ app: AppInfo }>(`/apps/${encodeURIComponent(pkg)}/category`, {
+    method: 'PUT',
+    body: JSON.stringify({ category }),
+  });
+}
+
+// Re-runs the Decision Layer's method analysis for one app.
+export function analyzeApp(pkg: string) {
+  return request<{ app: AppInfo }>(`/apps/${encodeURIComponent(pkg)}/analyze`, { method: 'POST' });
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard sections: Mobile Agent results and the API (Gmail) section
+// ---------------------------------------------------------------------------
+
+// Dashboard calls give up after this long, so a slow backend never freezes the screen.
+const DASHBOARD_TIMEOUT_MS = 20000;
+
+async function requestWithTimeout<T>(path: string): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DASHBOARD_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${BASE_URL}${path}`, { signal: controller.signal });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err: any = new Error(body.message || body.error || `GET ${path} failed: ${res.status}`);
+      err.code = body.error;
+      throw err;
+    }
+    return body as T;
+  } catch (e: any) {
+    if (e.name === 'AbortError') throw new Error('The backend took too long to answer. Pull down to retry.');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export type MobileAgentRecord = {
+  _id: string;
+  runId: string;
+  task: string;
+  status: 'done' | 'failed' | 'stopped';
+  resultText: string | null;
+  data: unknown;
+  items: string[];
+  steps: number;
+  finishedAt: string | null;
+};
+
+export function getMobileAgentResults(page = 1, limit = 20) {
+  return requestWithTimeout<{ records: MobileAgentRecord[]; total: number; page: number; hasMore: boolean }>(
+    `/dashboard/mobile-agent?page=${page}&limit=${limit}`
+  );
+}
+
+export type GmailStatus = { configured: boolean; connected: boolean; email: string | null; connectUrl: string | null };
+export type EmailSummary = { id: string; threadId: string; from: string; subject: string; receivedAt: string; snippet: string };
+
+export function getGmailStatus() {
+  return requestWithTimeout<GmailStatus>('/gmail/status');
+}
+
+// Emails received in the last `days` days (throws with code 'not_connected' if Gmail isn't connected).
+export function getRecentEmails(days = 7, limit = 50) {
+  return requestWithTimeout<{ emails: EmailSummary[]; truncated: boolean; days: number; limit: number }>(
+    `/gmail/recent?days=${days}&limit=${limit}`
+  );
 }

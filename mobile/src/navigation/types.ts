@@ -5,9 +5,12 @@ export type DashboardStackParamList = {
   LocationDetail: undefined;
   FilesDetail: undefined;
   CallLogDetail: undefined;
+  MobileAgentResults: undefined;
+  Emails: undefined;
 };
 
 export type RootTabParamList = {
   Dashboard: undefined;
   Agent: undefined;
+  Apps: undefined;
 };

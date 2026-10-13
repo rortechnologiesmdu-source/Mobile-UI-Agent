@@ -34,6 +34,19 @@ export function getInstalledApps(): Promise<InstalledApp[]> {
   return AgentModule.getInstalledApps();
 }
 
+// Installed Apps & Access Control: launcher apps with icon (base64 PNG) and Android's
+// category hint (-1 when none).
+export type DeviceApp = { package: string; label: string; androidCategory: number; icon: string | null };
+
+export function listApps(): Promise<DeviceApp[]> {
+  return AgentModule.listApps();
+}
+
+// The home-screen app's package (the agent may always go home).
+export function getHomePackage(): Promise<string> {
+  return AgentModule.getHomePackage();
+}
+
 export function bringAppToFront(): void {
   AgentModule.bringAppToFront();
 }

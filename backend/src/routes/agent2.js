@@ -2,7 +2,8 @@ const express = require('express');
 const AgentRun = require('../models/AgentRun');
 const MobileAgentResult = require('../models/MobileAgentResult');
 const { decideNextAction } = require('../services/agentDecision');
-const { decideTwoAgent } = require('../services/orchestrator');
+const { decideTwoAgent, resolveOpenApp } = require('../services/orchestrator');
+const { approvalNeeded, PACKAGE_RE } = require('../services/appAccess');
 const { isRepeating, checkSend, REPEAT_LIMIT } = require('../services/safety');
 const { snapTapToNamedTarget } = require('../services/grounding');
 const qwen = require('../services/qwenClient');
@@ -170,7 +171,10 @@ router.post('/runs', async (req, res) => {
     const platform = req.body.platform === 'ios' ? 'ios' : 'android';
     const status = req.body.queued === true ? 'queued' : 'running';
 
-    const run = await AgentRun.create({ goal, platform, status, steps: [], apps });
+    // The phone's home-screen app: going home never needs approval.
+    const homePackage = typeof req.body.homePackage === 'string' && PACKAGE_RE.test(req.body.homePackage) ? req.body.homePackage : '';
+
+    const run = await AgentRun.create({ goal, platform, status, steps: [], apps, homePackage });
     res.status(201).json({ runId: run._id, status });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -243,6 +247,24 @@ router.post('/runs/:id/step', async (req, res) => {
     }
     settleState.delete(runKey); // settled (or not a transition) — decide on this screen
 
+    // App access (Installed Apps & Access Control), enforced here — the one place every agent
+    // action passes through — so neither model can route around it. A disabled app pauses
+    // the run (needs_approval); the phone asks the user, and /resume re-checks the saved
+    // setting before continuing. Nothing is done in, or to open, a disabled app meanwhile.
+    const android = run.platform !== 'ios';
+    const pause = async (approval) => {
+      run.status = 'needs_approval';
+      run.approval = approval;
+      await run.save();
+      console.log(`[agent2] run ${run._id} needs approval for ${approval.package} (${approval.reason})`);
+      return res.json({ action: { action: 'wait' }, stepNumber: run.steps.length, status: run.status, resultText: '', confirm: null, approval });
+    };
+    // 1) The app in front, however the agent got there (a tap, a deep link, a link in another app).
+    if (android) {
+      const inFront = await approvalNeeded(currentApp, run.homePackage, 'in_front');
+      if (inFront) return pause(inFront);
+    }
+
     // Two-agent (Qwen plans/checks/remembers each step, MAI-UI-2B grounds) when
     // AGENT_MODE=two_agent; otherwise the single-model path (AGENT_BACKEND).
     const twoAgent = (process.env.AGENT_MODE || '').trim().toLowerCase() === 'two_agent';
@@ -259,6 +281,14 @@ router.post('/runs/:id/step', async (req, res) => {
       res.json({ action: { action: 'done', result: run.resultText }, stepNumber: 0, status: run.status, resultText: run.resultText, confirm: null });
       finishRun(run);
       return;
+    }
+    // 2) The apps the plan still needs (the current part onwards), one approval per app.
+    if (android && run.plan?.parts?.length) {
+      for (const part of run.plan.parts.slice(run.plan.current || 0)) {
+        const pkg = part.app ? resolveOpenApp(`open ${part.app}`, run.apps || []) : null;
+        const need = await approvalNeeded(pkg, run.homePackage, 'planned');
+        if (need) return pause(need);
+      }
     }
     const decided = twoAgent
       ? await decideTwoAgent({
@@ -311,6 +341,12 @@ router.post('/runs/:id/step', async (req, res) => {
         );
         action = snap.action;
       }
+    }
+
+    // 3) Opening an app: only an allowed one (checked before anything is recorded or executed).
+    if (android && action.action === 'launch_app') {
+      const need = await approvalNeeded(action.package, run.homePackage, 'launch');
+      if (need) return pause(need);
     }
 
     const repeating = isRepeating(
@@ -373,6 +409,26 @@ router.post('/runs/:id/step', async (req, res) => {
     if (run.status !== 'running') finishRun(run);
   } catch (err) {
     console.error(`[agent2] step failed for run ${req.params.id}: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// After the user allowed the app the run was waiting for: re-check the SAVED setting (not the
+// phone's word for it) and continue only if it really is allowed now.
+router.post('/runs/:id/resume', async (req, res) => {
+  try {
+    const run = await AgentRun.findById(req.params.id);
+    if (!run) return res.status(404).json({ error: 'run not found' });
+    if (run.status !== 'needs_approval') return res.status(409).json({ error: `run is ${run.status}` });
+    const waitingFor = run.approval;
+    const still = waitingFor?.package ? await approvalNeeded(waitingFor.package, run.homePackage, waitingFor.reason) : null;
+    if (still) return res.status(409).json({ error: `${still.label} is still disabled`, approval: still });
+    run.status = 'running';
+    run.approval = null;
+    await run.save();
+    console.log(`[agent2] run ${run._id} resumed: ${waitingFor?.package} is allowed`);
+    res.json({ status: run.status });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

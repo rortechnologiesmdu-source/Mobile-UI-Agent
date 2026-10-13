@@ -119,4 +119,14 @@ async function verify({ task, part, doneWhen, memory, partSteps, screenFacts, ac
   return { complete: body.complete === true, evidence: body.evidence || '', missing: body.missing || '', next: body.next || '' };
 }
 
-module.exports = { decide, extract, plan, verify };
+// Decision Layer: candidate data-collection methods for one app (the model server's /methods
+// endpoint — separate from the MobileUse agent's, same loaded Qwen3.5). The request follows the
+// documented contract { app, requested_data_types, available_capabilities }; the response is
+// validated by services/decisionLayer.js before anything is shown.
+async function methods(request) {
+  const body = await postJson('/methods', request);
+  console.log(`[decision] Qwen proposed ${(body.candidate_methods || []).map((m) => m?.method).join(', ') || 'nothing'} (${body.timing_ms?.total}ms)`);
+  return { candidate_methods: Array.isArray(body.candidate_methods) ? body.candidate_methods : [] };
+}
+
+module.exports = { decide, extract, plan, verify, methods };

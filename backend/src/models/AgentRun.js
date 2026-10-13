@@ -35,9 +35,15 @@ const AgentRunSchema = new mongoose.Schema(
     platform: { type: String, enum: ['android', 'ios'], default: 'android' },
     status: {
       type: String,
-      enum: ['queued', 'running', 'done', 'failed', 'stopped'],
+      // needs_approval: paused because the task needs an app that's disabled in Installed
+      // Apps & Access Control; resumes only after the user allows it (and it's re-checked).
+      enum: ['queued', 'running', 'needs_approval', 'done', 'failed', 'stopped'],
       default: 'running',
     },
+    // While needs_approval: { package, label, reason, message } of the app waiting for approval.
+    approval: { type: mongoose.Schema.Types.Mixed, default: null },
+    // The phone's home-screen app (reported at start; never needs approval).
+    homePackage: { type: String, default: '' },
     steps: { type: [AgentStepSchema], default: [] },
     // Launcher apps installed on the phone when the run started: [{ label, package }].
     apps: { type: mongoose.Schema.Types.Mixed, default: [] },

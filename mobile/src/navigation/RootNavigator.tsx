@@ -9,6 +9,9 @@ import LocationDetailScreen from '../screens/LocationDetailScreen';
 import FilesDetailScreen from '../screens/FilesDetailScreen';
 import CallLogDetailScreen from '../screens/CallLogDetailScreen';
 import AgentScreen from '../screens/AgentScreen';
+import InstalledAppsScreen from '../screens/InstalledAppsScreen';
+import MobileAgentResultsScreen from '../screens/MobileAgentResultsScreen';
+import EmailsScreen from '../screens/EmailsScreen';
 import type { DashboardStackParamList, RootTabParamList } from './types';
 
 const DashboardStack = createNativeStackNavigator<DashboardStackParamList>();
@@ -39,6 +42,12 @@ function DashboardStackNavigator() {
         component={CallLogDetailScreen}
         options={{ title: 'Call Log' }}
       />
+      <DashboardStack.Screen
+        name="MobileAgentResults"
+        component={MobileAgentResultsScreen}
+        options={{ title: 'Mobile Agent' }}
+      />
+      <DashboardStack.Screen name="Emails" component={EmailsScreen} options={{ title: 'Gmail · last 7 days' }} />
     </DashboardStack.Navigator>
   );
 }
@@ -55,6 +64,11 @@ export default function RootNavigator() {
         name="Agent"
         component={AgentScreen}
         options={{ tabBarIcon: () => <Text style={{ fontSize: 18 }}>🤖</Text> }}
+      />
+      <Tab.Screen
+        name="Apps"
+        component={InstalledAppsScreen}
+        options={{ title: 'Apps', tabBarIcon: () => <Text style={{ fontSize: 18 }}>🔐</Text> }}
       />
     </Tab.Navigator>
   );
