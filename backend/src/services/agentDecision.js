@@ -147,4 +147,4 @@ async function decideNextAction(observation) {
   }
 }
 
-module.exports = { decideNextAction };
+module.exports = { decideNextAction, validateAgentAction };

@@ -8,6 +8,17 @@ const SEND_LABEL = /^send\b/i;
 // Labels whose tap places a phone/voice/video call.
 const CALL_LABEL = /^(call|dial|voice call|video call)\b/i;
 const PHONE_NUMBER = /^\+?[\d][\d\s()-]{4,}$/;
+// Labels whose tap orders or pays — money leaves the account. Any app.
+const PAY_LABEL =
+  /^(pay\b|pay now|place (?:the |your )?order|check ?out|buy now|order now|confirm (?:order|and pay|payment)|make payment|proceed to (?:pay|payment|checkout|buy)|(?:slide|swipe) to (?:pay|order)|complete (?:order|purchase|payment)|subscribe now)/i;
+// "Continue"/"Proceed"/"Next" on a screen with a bill is a checkout step too.
+const PROCEED_LABEL = /^(continue|proceed|next)\b/i;
+const BILL_WORDS = /\b(total|to pay|grand total|bill|item total|amount payable|payable|subtotal)\b/i;
+const MONEY = /[₹$€£]\s?\d|\brs\.?\s?\d|\binr\s?\d/i;
+// Tasks that actually ask to buy/order/pay ("order a pizza", "buy ...", "pay the bill");
+// "extract my orders" / "order history" don't.
+const BUY_TASK =
+  /\b(buy|purchase|check ?out|pay (?:for|the|my|₹|rs)|make (?:a )?payment|place (?:an? |the |my )?order|book (?:a|an|the|my)|order (?!history|details|list|status)\w+)/i;
 
 function sameAction(a, b) {
   if (!a || !b || a.action !== b.action) return false;
@@ -137,6 +148,21 @@ function checkCall({ goal, label, tree, app }) {
   return { kind: 'call', confirm: `The agent is about to start a call in ${app}${shown}. Allow it?` };
 }
 
+// A tap that orders or pays. Blocked outright when the task never asked to buy/order/pay
+// (e.g. "extract my cart items" must not check out); otherwise the user confirms first.
+function checkPay({ goal, label, tree, app }) {
+  const labels = (tree || []).map(nodeLabel).filter(Boolean);
+  const isPay = PAY_LABEL.test(label) || (PROCEED_LABEL.test(label) && labels.some((l) => BILL_WORDS.test(l)) && labels.some((l) => MONEY.test(l)));
+  if (!isPay) return null;
+  if (!BUY_TASK.test(goal || '')) {
+    return {
+      kind: 'pay',
+      block: `Stopped before "${label}" in ${app}: it looks like a checkout/payment step, and your task didn't ask to buy, order or pay. Nothing was ordered.`,
+    };
+  }
+  return { kind: 'pay', confirm: `The agent is about to tap "${label}" in ${app} — this may place an order or make a payment. Allow it?` };
+}
+
 // Checks a tap on a "Send" or "Call" control before it happens:
 //   null               — not a send/call
 //   { block: message } — the recipient on screen isn't the one the goal names; don't do it
@@ -147,6 +173,8 @@ function checkSend({ goal, action, accessibilityTree, screenWidth, screenHeight,
   const label = node?.label || action.target.description || '';
   const app = currentApp || 'this app';
   if (CALL_LABEL.test(label)) return checkCall({ goal, label, tree: accessibilityTree, app });
+  const pay = checkPay({ goal, label, tree: accessibilityTree, app });
+  if (pay) return pay;
   if (!SEND_LABEL.test(label)) return null;
 
   const wanted = recipientFromGoal(goal);
